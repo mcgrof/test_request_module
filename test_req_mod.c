@@ -11,7 +11,7 @@ static char *test_driver = NULL;
 module_param(test_driver, charp, S_IRUGO);
 MODULE_PARM_DESC(test_driver, "Test driver to load with request_module()");
 
-#define MAX_TRYS 49
+#define MAX_TRYS 80
 int rets_sync[MAX_TRYS];
 
 struct task_struct *wake_up_task;
