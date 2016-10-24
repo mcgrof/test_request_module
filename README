@@ -1,0 +1,42 @@
+
+About
+=====
+
+request_module() stress tester.
+
+Example use:
+
+insmod ./test_req_mod.ko test_driver=crc8
+
+Or:
+
+insmod ./test_req_mod.ko test_driver=test_firmware
+
+This will create up to 80 threads and they will all try to
+load the same module with request_module(). This tries to stress
+test and show possible races with request_module().
+
+It shows there are no possible races other than just having
+pending modules with the same name try again and check if its
+ready.
+
+To further stress test the module loader we can try to wake up
+the module_wq with an additional exported symbol you can add
+to your kernel wake_up_modules(), if your kernel has this the
+module will automatically detect this and use it. Additionally
+it just forces a test driver to sleep for long on init, thereby
+forcing all contending threads to wait until the first thread
+finishes. All code you might need for extra stresses are provided
+in the file:
+
+optional-changes.patch
+
+Tested against 4.8.0
+
+Results
+=======
+
+Confirmation of no invalid race is possible, however we are limited
+to 50 concurrent threads, this is built in to the kernel. What this
+means is during init, if you have >= 50 concurrent threads running
+you will start barfing with -ENOMEM on users.

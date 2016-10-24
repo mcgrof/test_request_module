@@ -1,0 +1,52 @@
+diff --git a/include/linux/module.h b/include/linux/module.h
+index 0c3207d26ac0..0dbaca65fa95 100644
+--- a/include/linux/module.h
++++ b/include/linux/module.h
+@@ -608,6 +608,9 @@ int ref_module(struct module *a, struct module *b);
+ 	__mod ? __mod->name : "kernel";		\
+ })
+ 
++void wake_up_modules(void);
++#define wake_up_modules wake_up_modules
++
+ /* For kallsyms to ask for address resolution.  namebuf should be at
+  * least KSYM_NAME_LEN long: a pointer to namebuf is returned if
+  * found, otherwise NULL. */
+diff --git a/kernel/module.c b/kernel/module.c
+index 529efae9f481..f2b3d18d2812 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -3351,6 +3351,12 @@ static void do_free_init(struct rcu_head *head)
+ 	kfree(m);
+ }
+ 
++void wake_up_modules(void)
++{
++	wake_up_all(&module_wq);
++}
++EXPORT_SYMBOL_GPL(wake_up_modules);
++
+ /*
+  * This is where the real work happens.
+  *
+diff --git a/lib/test_firmware.c b/lib/test_firmware.c
+index a3e8ec3fb1c5..fcb48492922a 100644
+--- a/lib/test_firmware.c
++++ b/lib/test_firmware.c
+@@ -19,6 +19,7 @@
+ #include <linux/miscdevice.h>
+ #include <linux/slab.h>
+ #include <linux/uaccess.h>
++#include <linux/delay.h>
+ 
+ static DEFINE_MUTEX(test_fw_mutex);
+ static const struct firmware *test_firmware;
+@@ -155,6 +156,8 @@ static int __init test_firmware_init(void)
+ 		goto remove_file;
+ 	}
+ 
++	ssleep(10);
++
+ 	pr_warn("interface ready\n");
+ 
+ 	return 0;
