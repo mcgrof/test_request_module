@@ -6,13 +6,19 @@
 #include <linux/printk.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
+#include <linux/fs.h>
 
 static char *test_driver = NULL;
 module_param(test_driver, charp, S_IRUGO);
 MODULE_PARM_DESC(test_driver, "Test driver to load with request_module()");
 
+static char *test_fs = NULL;
+module_param(test_fs, charp, S_IRUGO);
+MODULE_PARM_DESC(test_fs, "Test filesystem check()");
+
 #define MAX_TRYS 80
 int rets_sync[MAX_TRYS];
+struct file_system_type *fs_sync[MAX_TRYS];
 
 struct task_struct *wake_up_task;
 struct task_struct *tasks_sync[MAX_TRYS];
@@ -34,7 +40,12 @@ static int run_request(void *data)
 	unsigned int *i = data;
 
 	wake_up_module_loader();
-	rets_sync[*i] = request_module("%s", test_driver);
+
+	if (test_driver)
+		rets_sync[*i] = request_module("%s", test_driver);
+	else if (test_fs)
+		fs_sync[*i] = get_fs_type(test_fs);
+
 	pr_info("Ran thread %d\n", *i);
 	wake_up_module_loader();
 
@@ -58,9 +69,16 @@ static void tally_up_work(void)
 {
 	unsigned int i;
 
-	for (i=0; i < MAX_TRYS-1; i++)
-		pr_info("Sync thread %d return status: %d\n",
-			i, rets_sync[i]);
+	pr_info("Results:\n");
+
+	for (i=0; i < MAX_TRYS-1; i++) {
+		if (test_driver)
+			pr_info("Sync thread %d return status: %d\n",
+				i, rets_sync[i]);
+		else if (test_fs)
+			pr_info("Sync thread %d fs: %s\n",
+				i, fs_sync[i] ? test_fs : "NULL");
+	}
 }
 
 static void try_requests(void)
@@ -132,13 +150,20 @@ static int __init test_request_module_init(void)
 {
 	int r;
 
-	if (!test_driver) {
-		pr_info("Must load with the test_driver module parameter\n");
+	if (!test_driver && !test_fs) {
+		pr_err("Must load with the either the test_driver or test_fs module parameter\n");
+		return -EINVAL;
+	}
+	if (test_driver && test_fs) {
+		pr_err("Module parameteres test_driver and test_fs are mutually exclusive, pick on");
 		return -EINVAL;
 	}
 
 	pr_info("Testing request_module()!\n");
-	pr_info("Test driver to load: %s\n", test_driver);
+	if (test_driver)
+		pr_info("Test driver to load: %s\n", test_driver);
+	if (test_fs)
+		pr_info("Test filesystem to load: %s\n", test_fs);
 	pr_info("Number of threads to run: %d\n", MAX_TRYS-1);
 	pr_info("Thread IDs will range from 0 - %d\n", MAX_TRYS-2);
 

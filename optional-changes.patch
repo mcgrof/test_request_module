@@ -50,3 +50,24 @@ index a3e8ec3fb1c5..fcb48492922a 100644
  	pr_warn("interface ready\n");
  
  	return 0;
+diff --git a/fs/xfs/xfs_super.c b/fs/xfs/xfs_super.c
+index fd6be45b3a1e..2e9c91cf211f 100644
+--- a/fs/xfs/xfs_super.c
++++ b/fs/xfs/xfs_super.c
+@@ -57,6 +57,7 @@
+ #include <linux/kthread.h>
+ #include <linux/freezer.h>
+ #include <linux/parser.h>
++#include <linux/delay.h>
+ 
+ static const struct super_operations xfs_super_operations;
+ struct bio_set *xfs_ioend_bioset;
+@@ -1879,6 +1880,8 @@ init_xfs_fs(void)
+ {
+ 	int			error;
+ 
++	ssleep(10);
++
+ 	xfs_check_ondisk_structs();
+ 
+ 	printk(KERN_INFO XFS_VERSION_STRING " with "

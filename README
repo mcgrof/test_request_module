@@ -2,19 +2,57 @@
 About
 =====
 
-request_module() stress tester.
+request_module() and get_fs_type() stress tester.
+
+Using this module
+=================
+
+You need at least 4.8.0 kernels.
 
 Example use:
 
+1) Testing just request_module():
+
 insmod ./test_req_mod.ko test_driver=crc8
 
-Or:
+If you build your own kernel and have CONFIG_TEST_FIRMWARE=m
+and have applied the patch optional-changes.patch:
 
 insmod ./test_req_mod.ko test_driver=test_firmware
 
+2) Testing get_fs_type():
+
+Choose a filesystem that you do not have for usage of your
+system. For instance my system requires ext4 so I can use:
+
+insmod ./test_req_mod.ko test_fs=xfs
+or
+insmod ./test_req_mod.ko test_fs=ext4
+
+If you have applied optional-changes.patch be sure to remove
+the changes to fs/xfs/xfs_super.c if your filesystems depend
+on XFS as it causes a delay on initialization of XFS.
+
+The file extend-max-kmod.patch provides a suggested change
+to make the max number of concurrent modprobes configurable at
+boot time, and allow an override through a kernel parameter, for
+instance to increase the limit to 2048 concurrent threads you would
+use:
+
+	kmod.max_modprobes=2048
+
+The patch also changes the default from 50 to 1024 for large systems,
+while for small systems it bumps it up from 50 to 128.
+
+What this module does
+=====================
+
 This will create up to 80 threads and they will all try to
-load the same module with request_module(). This tries to stress
-test and show possible races with request_module().
+load the same module with request_module() or use get_fs_type() to
+try to also load the respective module for the filesystem.
+
+Both tests try to stress test and show possible races with
+request_module() and get_fs_type().
 
 It shows there are no possible races other than just having
 pending modules with the same name try again and check if its
@@ -31,12 +69,41 @@ in the file:
 
 optional-changes.patch
 
-Tested against 4.8.0
-
 Results
 =======
 
 Confirmation of no invalid race is possible, however we are limited
-to 50 concurrent threads, this is built in to the kernel. What this
-means is during init, if you have >= 50 concurrent threads running
-you will start barfing with -ENOMEM on users.
+to 50 concurrent threads, this is built in to the kernel with
+MAX_KMOD_CONCURRENT on kernel/kmod.c. What this means is during init,
+if you have >= 50 concurrent threads running you will start barfing
+with -ENOMEM on users. If you have over 50 get_fs_type() calls you will
+also run into the same situation, however since all you get is NULL in
+return you will not know what caused it unless you inspect the kernel
+log.
+
+For both situations after MAX_KMOD_CONCURRENT concurrent threads you will see:
+
+request_module: runaway loop modprobe fs-xfs
+
+For a filsystem issue with get_fs_type(), otherwise you'll see the name of
+the module that hit this issue. The "fs-xfs" happens as this is an alias
+which can be used by the kernel to load the "xfs" module.
+
+It *may* perhaps be acceptable to expect <= 50 request_module() threads to
+be ongoing at the same time, however this provides a rather cryptic issue
+for users. For filesystems, it might *not* be ludicrous to have more than 50
+concurrent get_fs_type() calls during bootup. If you suspect this might be
+your issue you can try to lift MAX_KMOD_CONCURRENT for now. The max set of
+allowed concurrent threads is actually computed as follows:
+
+max_modprobes = min(max_threads/2, MAX_KMOD_CONCURRENT);
+
+The max threads is set on init prior to loading modules on fork_init()
+via set_max_threads(). You can see this value after boot up with:
+
+cat /proc/sys/kernel/threads-max
+61310
+
+You can customize this at run time by adding to your /etc/sysctl.conf:
+
+kernel.threads-max = "value"
