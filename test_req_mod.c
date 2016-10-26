@@ -17,8 +17,10 @@ module_param(test_fs, charp, S_IRUGO);
 MODULE_PARM_DESC(test_fs, "Test filesystem check()");
 
 #define NUM_THREADS 80
+unsigned int num_threads = NUM_THREADS;
 
 #define MAX_TRYS NUM_THREADS + 1
+
 int rets_sync[MAX_TRYS];
 struct file_system_type *fs_sync[MAX_TRYS];
 
@@ -57,7 +59,7 @@ static int run_request(void *data)
 
 	spin_lock(&lock);
 	done++;
-	if (done == MAX_TRYS-1) {
+	if (done == num_threads) {
 		pr_info("Done: %d threads have all run now\n", done);
 		pr_info("Last thread to run: %d\n", *i);
 		complete(&kthreads_done);
@@ -77,7 +79,7 @@ static void tally_up_work(void)
 
 	pr_info("Results:\n");
 
-	for (i=0; i < MAX_TRYS-1; i++) {
+	for (i=0; i < num_threads; i++) {
 		if (test_driver)
 			pr_info("Sync thread %d return status: %d\n",
 				i, rets_sync[i]);
@@ -98,7 +100,7 @@ static void try_requests(void)
 	char name[12];
 	bool any_error = false;
 
-	for (i=0; i < MAX_TRYS-1; i++) {
+	for (i=0; i < num_threads; i++) {
 		vals[i] = i;
 		sprintf(name, "test-run-%d", i);
 		wake_up_module_loader();
@@ -126,7 +128,7 @@ static int run_wake_up(void *data)
 
 	while (true) {
 		spin_lock(&lock);
-		if (done >= MAX_TRYS-1) {
+		if (done >= num_threads) {
 			spin_unlock(&lock);
 			pr_info("Wake up thread no longer needed, on count %d\n", i);
 			break;
@@ -175,8 +177,8 @@ static int __init test_request_module_init(void)
 		pr_info("Test driver to load: %s\n", test_driver);
 	if (test_fs)
 		pr_info("Test filesystem to load: %s\n", test_fs);
-	pr_info("Number of threads to run: %d\n", MAX_TRYS-1);
-	pr_info("Thread IDs will range from 0 - %d\n", MAX_TRYS-2);
+	pr_info("Number of threads to run: %d\n", num_threads);
+	pr_info("Thread IDs will range from 0 - %d\n", num_threads - 1);
 
 	r = setup_mod_waker();
 	if (r)
@@ -197,7 +199,7 @@ static void __exit test_request_module_exit(void)
 		kthread_stop(wake_up_task);
 	}
 
-	for (i=0; i < MAX_TRYS-1; i++) {
+	for (i=0; i < num_threads; i++) {
 		if (tasks_sync[i]) {
 			pr_info("Stopping still-running thread %i\n", i);
 			kthread_stop(tasks_sync[i]);
