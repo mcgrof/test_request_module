@@ -16,7 +16,7 @@ static char *test_fs = NULL;
 module_param(test_fs, charp, S_IRUGO);
 MODULE_PARM_DESC(test_fs, "Test filesystem check()");
 
-#define NUM_THREADS 80
+#define NUM_THREADS 10
 unsigned int num_threads = NUM_THREADS;
 
 #define MAX_TRYS NUM_THREADS + 1
@@ -49,7 +49,8 @@ static int run_request(void *data)
 		rets_sync[*i] = request_module("%s", test_driver);
 	else if (test_fs) {
 		if (*i % 2 == 0)
-			rets_sync[*i] = request_module("%s", test_fs);
+			//rets_sync[*i] = request_module("%s", test_fs);
+			fs_sync[*i] = get_fs_type(test_fs);
 		else
 			fs_sync[*i] = get_fs_type(test_fs);
 	}
@@ -85,8 +86,8 @@ static void tally_up_work(void)
 				i, rets_sync[i]);
 		else if (test_fs) {
 			if (i % 2 == 0)
-				pr_info("Sync thread %d return status: %d\n",
-					i, rets_sync[i]);
+				pr_info("Sync thread %d fs: %s\n",
+					i, fs_sync[i] ? test_fs : "NULL");
 			else
 				pr_info("Sync thread %d fs: %s\n",
 					i, fs_sync[i] ? test_fs : "NULL");
