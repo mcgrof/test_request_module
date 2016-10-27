@@ -204,6 +204,8 @@ static void __exit test_request_module_exit(void)
 			pr_info("Stopping still-running thread %i\n", i);
 			kthread_stop(tasks_sync[i]);
 		}
+		if (fs_sync[i])
+			module_put(fs_sync[i]->owner);
 	}
 }
 
