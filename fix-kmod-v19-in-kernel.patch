@@ -1,0 +1,199 @@
+From 2e28f661db6afff3c42bf217cb3b8c7df4236285 Mon Sep 17 00:00:00 2001
+From: "Luis R. Rodriguez" <mcgrof@kernel.org>
+Date: Fri, 11 Nov 2016 10:35:35 -0800
+Subject: [PATCH] kmod: work around kmod <= v19 module loading
+
+kmod <= v19 is broken where it returns 0 to modprobe calls, assuming
+the kernel module is built-in, where really we have a race as the module
+starts forming. kmod <= v19 has incorrect userspace heuristics, a
+userspace kmod fix is available for it:
+
+http://git.kernel.org/cgit/utils/kernel/kmod/kmod.git/commit/libkmod/libkmod-module.c?id=fd44a98ae2eb5eb32161088954ab21e58e19dfc4
+
+However if we need a respective kernel fix to account for old userspace.
+
+kmod <= v19 will return 0 on modprobe calls if you are built-in,
+however its heuristics for checking if you are built-in assumes the
+fact that the directory existing:
+
+/sys/module/module-name
+
+But not:
+
+/sys/module/module-name/initstate
+
+is sufficient to assume a module is built-in. The kernel loads the
+inittstate attribute *after* it creates the directory. This is an issue
+when modprobe returns 0 for kernel calls which assumes a return of 0
+on request_module() can give you the right to assert the module is
+loaded and live.
+
+We cannot trust returns of modprobe as 0 in the kernel, we need to
+verify that modules are live if modprobe return 0 but only if modules
+*are* modules. The kernel heuristic we use to determine if a module is
+built-in is that if modprobe returns 0 we know we must be built-in or
+a module, but if we are a module clearly we must have a lingering kmod
+dangling on our linked list. If there is no modules there we *somewhat*
+certain the module must be built in.
+
+This is not enough though... we cannot easily work around this since the
+kernel can use aliases to userspace for modules calls. For instance
+fs/namespace.c uses fs-modulename for filesystesms on get_fs_type(), so
+these need to be taken into consideration as well.
+
+Reproducing this is not easy, it takes a big system or you need to tweak
+your kernel to cheat and force a race on multiple threads against
+get_fs_type() or request_module(), a multithreaded test driver to help
+with this exist on github:
+
+https://github.com/mcgrof/test_request_module
+
+You will need to install kmod <= v19, be sure to install its modprobe
+into /sbin/ as by default the 'make install' target does not replace
+your own.
+
+Reported-by: Martin Wilck <martin.wilck@suse.com>
+Reported-by: Randy Wright <rwright@hpe.com>
+Signed-off-by: Luis R. Rodriguez <mcgrof@kernel.org>
+---
+ kernel/kmod.c   | 73 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ kernel/module.c | 11 ++++++---
+ 2 files changed, 81 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/kmod.c b/kernel/kmod.c
+index 0277d1216f80..7c0a917f0a9e 100644
+--- a/kernel/kmod.c
++++ b/kernel/kmod.c
+@@ -55,6 +55,11 @@ static DECLARE_RWSEM(umhelper_sem);
+ 
+ #ifdef CONFIG_MODULES
+ 
++bool finished_loading(const char *name);
++int module_wait_until_finished(const char *name);
++struct module *find_module_all(const char *name, size_t len,
++			       bool even_unformed);
++
+ /*
+ 	modprobe_path is set via /proc/sys.
+ */
+@@ -105,6 +110,72 @@ out:
+ 	return -ENOMEM;
+ }
+ 
++static bool kmod_exists(char *name)
++{
++	struct module *mod;
++
++	mutex_lock(&module_mutex);
++	mod = find_module_all(name, strlen(name), true);
++	mutex_unlock(&module_mutex);
++
++	if (mod)
++		return true;
++
++	return false;
++}
++
++/*
++ * The assumption is this must be a module, it could still not be live though
++ * since kmod <= 19 returns 0 even if it was not ready yet.  Allow for force
++ * wait check in case you are stuck on old userspace.
++ */
++static int wait_for_kmod(char *name)
++{
++	int ret = 0;
++
++	if (!finished_loading(name))
++		ret = module_wait_until_finished(name);
++
++	return ret;
++}
++
++/*
++ * kmod <= 19 will tell us modprobe returned 0 even if the module
++ * is not ready yet, it does this because it checks the /sys/module/mod-name
++ * directory and if its created but the /sys/module/mod-name/initstate is not
++ * created it assumes you have a built-in driver. At this point the module
++ * is still unformed, and telling the kernel at any point via request_module()
++ * will cause issues given a lot of places in the kernel assert that the driver
++ * will be present and ready. We need to account for this.
++ *
++ * If we had a module and even if buggy modprobe returned 0, we know we'd at
++ * least have a dangling kmod entry we could fetch.
++ *
++ * If modprobe returned 0 and we cannot find a kmod entry this is a good
++ * indicator your by userspace and kernel space that what you have is built-in.
++ *
++ * If modprobe returned 0 and we can find a kmod entry we should air on the
++ * side of caution and wait for the module to become ready or going.
++ *
++ * In the worst case, for built-in, we have to check on the module list for
++ * as many aliases possible the kernel gives the module, if that is n, that
++ * n traversals on the module list.
++ */
++static int finished_kmod_load(char *name)
++{
++	int ret = 0;
++	bool is_fs = (strlen(name) > 3) && (strncmp(name, "fs-", 3) == 0);
++
++	if (kmod_exists(name)) {
++		ret = wait_for_kmod(name);
++	} else {
++		if (is_fs && kmod_exists(name + 3))
++			ret = wait_for_kmod(name + 3);
++	}
++
++	return ret;
++}
++
+ /**
+  * __request_module - try to load a kernel module
+  * @wait: wait (or not) for the operation to complete
+@@ -181,6 +252,8 @@ int __request_module(bool wait, const char *fmt, ...)
+ 	trace_module_request(module_name, wait, _RET_IP_);
+ 
+ 	ret = call_modprobe(module_name, wait ? UMH_WAIT_PROC : UMH_WAIT_EXEC);
++	if (!ret)
++		ret = finished_kmod_load(module_name);
+ 
+ 	atomic_dec(&kmod_concurrent);
+ 	return ret;
+diff --git a/kernel/module.c b/kernel/module.c
+index 529efae9f481..8ece4e5fe342 100644
+--- a/kernel/module.c
++++ b/kernel/module.c
+@@ -587,8 +587,8 @@ EXPORT_SYMBOL_GPL(find_symbol);
+  * Search for module by name: must hold module_mutex (or preempt disabled
+  * for read-only access).
+  */
+-static struct module *find_module_all(const char *name, size_t len,
+-				      bool even_unformed)
++struct module *find_module_all(const char *name, size_t len,
++			       bool even_unformed)
+ {
+ 	struct module *mod;
+ 
+@@ -3307,7 +3307,7 @@ static int post_relocation(struct module *mod, const struct load_info *info)
+ }
+ 
+ /* Is this module of this name done loading?  No locks held. */
+-static bool finished_loading(const char *name)
++bool finished_loading(const char *name)
+ {
+ 	struct module *mod;
+ 	bool ret;
+@@ -3468,6 +3468,11 @@ static int may_init_module(void)
+ 	return 0;
+ }
+ 
++int module_wait_until_finished(const char *name)
++{
++	return wait_event_interruptible(module_wq, finished_loading(name));
++}
++
+ /*
+  * We try to place it in the list now to make sure it's unique before
+  * we dedicate too many resources.  In particular, temporary percpu
+-- 
+2.9.3
+

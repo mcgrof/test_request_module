@@ -7,9 +7,25 @@ request_module() and get_fs_type() stress tester.
 Using this module
 =================
 
-You need at least 4.8.0 kernels.
+  o You need at least 4.8.0 kernels.
+  o You need to install kmod <= v19 for test case 0) below
+
+note: 'make install' in kmod will not install modprobe to /sbin/, find it
+and copy it yourself to force this issue.
 
 Example use:
+
+0) After applying to your kernel the patch:
+
+force-mod-broken-kmod-19.patch
+
+Try building and using the script:
+
+./kick-slow
+
+To fix try upgrading kmod or apply the kernel patch:
+
+fix-kmod-v19-in-kernel.patch
 
 1) Testing just request_module():
 

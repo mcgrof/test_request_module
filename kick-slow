@@ -1,0 +1,8 @@
+#!/bin/bash
+
+while true; do
+	echo "Trying again.."
+	./load.sh
+	sudo dmesg -c | grep NULL
+	./unload.sh
+done
